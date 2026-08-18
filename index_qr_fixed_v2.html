@@ -442,152 +442,56 @@ let videoStream = null;
 const scanCanvas = document.createElement('canvas');
 const scanCtx = scanCanvas.getContext('2d', { willReadFrequently:true });
 
-let lastScanTime = 0;
-let qrDetector = null;
-
 async function startScanner(){
   const video = $('scanVideo');
-
   try{
-    video.setAttribute('playsinline', '');
-    video.setAttribute('autoplay', '');
-    video.muted = true;
-
-    videoStream = await navigator.mediaDevices.getUserMedia({
-      audio:false,
-      video:{
-        facingMode:{ exact:'environment' },
-        width:{ min:640, ideal:1280, max:1920 },
-        height:{ min:480, ideal:720, max:1080 }
-      }
+    videoStream = await navigator.mediaDevices.getUserMedia({ 
+      video:{ 
+        facingMode:'environment',
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      } 
     });
-
     video.srcObject = videoStream;
-
-    const track = videoStream.getVideoTracks()[0];
-
-    // حاول تفعيل continuous autofocus في الموبايلات التي تدعمه
-    try{
-      const caps = track.getCapabilities ? track.getCapabilities() : {};
-      if(caps.focusMode && caps.focusMode.includes('continuous')){
-        await track.applyConstraints({ advanced:[{ focusMode:'continuous' }] });
-      }
-    }catch(e){}
-
     await video.play();
-
     $('scanError').style.display = 'none';
     scanning = true;
-    scanLocked = false;
-    lastScanTime = 0;
-
     requestAnimationFrame(tickScan);
   }catch(err){
     $('scanError').style.display = 'block';
-    $('scanError').textContent =
-      'تعذر تشغيل الكاميرا: تأكد من إعطاء إذن الكاميرا للمتصفح، أو استخدم تبويب البحث بدل ذلك.';
+    $('scanError').textContent = 'تعذر تشغيل الكاميرا: تأكد من إعطاء إذن الكاميرا للمتصفح. لو فاتح الملف من الكمبيوتر مباشرة (file://) لازم تشغله على Local Server.';
+    console.error("Camera Error:", err);
   }
 }
-
-function pauseScanner(){
-  scanning = false;
-}
-
+function pauseScanner(){ scanning = false; }
 function resumeScanner(){
-  if(!scanning && videoStream){
-    scanning = true;
-    scanLocked = false;
-    requestAnimationFrame(tickScan);
-  }
+  if(!scanning && videoStream){ scanning = true; requestAnimationFrame(tickScan); }
+  scanLocked = false;
 }
-
 function stopScanner(){
   scanning = false;
-  if(videoStream){
-    videoStream.getTracks().forEach(t=>t.stop());
-    videoStream = null;
-  }
+  if(videoStream){ videoStream.getTracks().forEach(t=>t.stop()); videoStream = null; }
 }
-
-async function tickScan(){
+function tickScan(){
   if(!scanning) return;
-
   const video = $('scanVideo');
-
-  if(
-    video.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA &&
-    video.videoWidth > 0 &&
-    video.videoHeight > 0 &&
-    !scanLocked &&
-    Date.now() - lastScanTime > 100
-  ){
-    lastScanTime = Date.now();
-
-    let decoded = null;
-
-    // 1) BarcodeDetector — سريع جدًا على المتصفحات التي تدعمه
-    if('BarcodeDetector' in window){
-      try{
-        if(!qrDetector){
-          const formats = await BarcodeDetector.getSupportedFormats();
-          if(formats.includes('qr_code')){
-            qrDetector = new BarcodeDetector({ formats:['qr_code'] });
-          }
-        }
-
-        if(qrDetector){
-          const codes = await qrDetector.detect(video);
-          if(codes && codes.length && codes[0].rawValue){
-            decoded = codes[0].rawValue;
-          }
-        }
-      }catch(e){}
-    }
-
-    // 2) jsQR — يعمل كحل أساسي للمتصفحات التي لا تدعم BarcodeDetector
-    if(!decoded){
-      const maxSize = 1000;
-      const scale = Math.min(1, maxSize / Math.max(video.videoWidth, video.videoHeight));
-
-      scanCanvas.width = Math.max(1, Math.floor(video.videoWidth * scale));
-      scanCanvas.height = Math.max(1, Math.floor(video.videoHeight * scale));
-
-      scanCtx.imageSmoothingEnabled = false;
-      scanCtx.drawImage(
-        video,
-        0, 0, video.videoWidth, video.videoHeight,
-        0, 0, scanCanvas.width, scanCanvas.height
-      );
-
-      const imageData = scanCtx.getImageData(
-        0, 0, scanCanvas.width, scanCanvas.height
-      );
-
-      const qr = jsQR(
-        imageData.data,
-        imageData.width,
-        imageData.height,
-        {
-          inversionAttempts:'attemptBoth',
-          greyScaleWeights:{ red:0.299, green:0.587, blue:0.114 }
-        }
-      );
-
-      if(qr && qr.data){
-        decoded = qr.data;
-      }
-    }
-
-    if(decoded){
+  if(video.readyState === video.HAVE_ENOUGH_DATA && !scanLocked){
+    scanCanvas.width = video.videoWidth;
+    scanCanvas.height = video.videoHeight;
+    scanCtx.drawImage(video, 0, 0, scanCanvas.width, scanCanvas.height);
+    const imageData = scanCtx.getImageData(0, 0, scanCanvas.width, scanCanvas.height);
+    
+    const result = jsQR(imageData.data, imageData.width, imageData.height, { 
+      inversionAttempts: 'attemptBoth' 
+    });
+    
+    if(result && result.data){
       scanLocked = true;
-      handleScannedCode(String(decoded).trim());
-      return;
+      handleScannedCode(result.data.trim());
     }
   }
-
   requestAnimationFrame(tickScan);
 }
-
 function handleScannedCode(code){
   const student = state.byCode[code];
   if(student){
