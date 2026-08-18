@@ -445,7 +445,14 @@ const scanCtx = scanCanvas.getContext('2d', { willReadFrequently:true });
 async function startScanner(){
   const video = $('scanVideo');
   try{
-    videoStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } });
+    videoStream = await navigator.mediaDevices.getUserMedia({
+      video:{
+        facingMode:{ ideal:'environment' },
+        width:{ ideal:1280 },
+        height:{ ideal:720 }
+      },
+      audio:false
+    });
     video.srcObject = videoStream;
     await video.play();
     $('scanError').style.display = 'none';
@@ -465,20 +472,56 @@ function stopScanner(){
   scanning = false;
   if(videoStream){ videoStream.getTracks().forEach(t=>t.stop()); videoStream = null; }
 }
-function tickScan(){
+async function tickScan(){
   if(!scanning) return;
+
   const video = $('scanVideo');
-  if(video.readyState === video.HAVE_ENOUGH_DATA && !scanLocked){
-    scanCanvas.width = video.videoWidth;
-    scanCanvas.height = video.videoHeight;
-    scanCtx.drawImage(video, 0, 0, scanCanvas.width, scanCanvas.height);
-    const imageData = scanCtx.getImageData(0, 0, scanCanvas.width, scanCanvas.height);
-    const result = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts:'dontInvert' });
-    if(result && result.data){
+
+  if(video.readyState >= video.HAVE_ENOUGH_DATA && !scanLocked){
+    let result = null;
+
+    // استخدم BarcodeDetector أولاً عندما يكون مدعومًا في المتصفح
+    if('BarcodeDetector' in window){
+      try{
+        if(!tickScan.detector){
+          tickScan.detector = new BarcodeDetector({ formats:['qr_code'] });
+        }
+        const detected = await tickScan.detector.detect(video);
+        if(detected && detected.length && detected[0].rawValue){
+          result = detected[0].rawValue;
+        }
+      }catch(e){}
+    }
+
+    // fallback إلى jsQR لو BarcodeDetector غير متاح أو لم يقرأ الكود
+    if(!result){
+      scanCanvas.width = video.videoWidth;
+      scanCanvas.height = video.videoHeight;
+      scanCtx.drawImage(video, 0, 0, scanCanvas.width, scanCanvas.height);
+
+      const imageData = scanCtx.getImageData(
+        0, 0, scanCanvas.width, scanCanvas.height
+      );
+
+      const qr = jsQR(
+        imageData.data,
+        imageData.width,
+        imageData.height,
+        { inversionAttempts:'attemptBoth' }
+      );
+
+      if(qr && qr.data){
+        result = qr.data;
+      }
+    }
+
+    if(result){
       scanLocked = true;
-      handleScannedCode(result.data.trim());
+      handleScannedCode(String(result).trim());
+      return;
     }
   }
+
   requestAnimationFrame(tickScan);
 }
 function handleScannedCode(code){
