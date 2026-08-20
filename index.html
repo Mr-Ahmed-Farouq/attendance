@@ -150,7 +150,7 @@
   }
   .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
 
-  .row-gap{ display:flex; gap:10px; }
+  .row-gap{ display:flex; gap:10px; flex-wrap:wrap; }
   .link-btn{ background:none; border:none; color:var(--accent); font-family:'Tajawal'; font-weight:700; font-size:13.5px; cursor:pointer; padding:6px 0; text-align:right; }
   .spinner{ width:18px; height:18px; border-radius:50%; border:3px solid rgba(255,255,255,.4); border-top-color:#fff; animation:spin .7s linear infinite; }
   @keyframes spin{ to{ transform:rotate(360deg); } }
@@ -212,6 +212,7 @@
     <div class="row-gap">
       <button class="btn btn-ghost btn-sm" id="changeCenterBtn">تغيير السنتر</button>
       <button class="btn btn-danger btn-sm" id="clearSessionBtn">مسح القائمة المعروضة</button>
+      <button class="btn btn-ghost btn-sm" id="restoreSessionBtn">استرجاع آخر قائمة</button>
       <button class="btn btn-ghost btn-sm" id="exportBtn">تنزيل Excel</button>
     </div>
 
@@ -601,6 +602,7 @@ async function confirmAttendance(){
   };
   state.session.unshift(record);
   renderSessionList();
+  saveCurrentSession();
   closeConfirm();
   showToast(`تم تسجيل حضور ${record.name}`);
   await queueForSync(record);
@@ -619,16 +621,56 @@ function renderSessionList(){
   });
 }
 
+/* ============================================================ حفظ واسترجاع القائمة تلقائياً (localStorage) */
+const SESSION_STORAGE_KEY = 'current-session';
+const SESSION_BACKUP_KEY = 'session-backup';
+
+function saveCurrentSession(){
+  try{ localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(state.session)); }
+  catch(e){ console.error('save session failed', e); }
+}
+function loadCurrentSession(){
+  try{
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  }catch(e){ return []; }
+}
+function backupCurrentSession(){
+  try{ localStorage.setItem(SESSION_BACKUP_KEY, JSON.stringify(state.session)); }
+  catch(e){ console.error('backup session failed', e); }
+}
+function loadSessionBackup(){
+  try{
+    const raw = localStorage.getItem(SESSION_BACKUP_KEY);
+    return raw ? JSON.parse(raw) : [];
+  }catch(e){ return []; }
+}
+
 /* ============================================================ مسح القائمة / تغيير السنتر */
 $('clearSessionBtn').addEventListener('click', ()=>{
   if(state.session.length && !confirm('مسح كل التسجيلات المعروضة من الشاشة؟ (التسجيلات اللي لسه منزامنتش هتفضل بتحاول تتزامن في الخلفية)')) return;
+  backupCurrentSession(); // نسخة احتياطية قبل المسح، ممكن ترجعها بزرار "استرجاع آخر قائمة"
   state.session = [];
   renderSessionList();
+  saveCurrentSession();
+});
+$('restoreSessionBtn').addEventListener('click', ()=>{
+  const backup = loadSessionBackup();
+  if(!backup.length){
+    showToast('مفيش قائمة محفوظة للاسترجاع');
+    return;
+  }
+  if(state.session.length && !confirm('هيتم استبدال القائمة المعروضة حالياً بآخر قائمة محفوظة. متابعة؟')) return;
+  state.session = backup;
+  renderSessionList();
+  saveCurrentSession();
+  showToast('تم استرجاع آخر قائمة محفوظة');
 });
 $('changeCenterBtn').addEventListener('click', ()=>{
   if(state.session.length && !confirm('هترجع لاختيار السنتر، وهتتمسح القائمة المعروضة على الشاشة. متأكد؟')) return;
   state.session = [];
   renderSessionList();
+  saveCurrentSession();
   stopScanner();
   showStep(2);
 });
@@ -706,6 +748,13 @@ window.addEventListener('offline', ()=>{ $('netDot').classList.add('off'); $('ne
   const pending = await getPending();
   updatePendingBadge(pending.length);
   attemptSync();
+
+  // استرجاع تلقائي لقائمة الحضور المحفوظة من آخر جلسة، فور فتح الصفحة أو تحديثها
+  const savedSession = loadCurrentSession();
+  if(savedSession.length){
+    state.session = savedSession;
+    renderSessionList();
+  }
 })();
 </script>
 </body>
