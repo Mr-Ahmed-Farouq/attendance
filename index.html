@@ -69,7 +69,7 @@
   .subtitle{ font-size:14px; color:var(--ink-soft); margin-bottom:6px; }
 
   label{ font-size:13px; font-weight:700; color:var(--ink-soft); display:block; margin-bottom:6px; }
-  input[type=text], input[type=tel], input[type=search]{
+  input[type=text], input[type=tel], input[type=search], input[type=number]{
     width:100%; padding:14px 14px; border-radius:12px; border:1.5px solid var(--line);
     font-size:16px; font-family:'Tajawal'; background:#fbfcfc; color:var(--ink);
   }
@@ -168,6 +168,9 @@
       <div class="subtitle">اكتب اسمك، هيتسجل جنب كل حضور بترصده</div>
       <label for="supervisorInput">اسم المشرف</label>
       <input type="text" id="supervisorInput" placeholder="مثال: أحمد فاروق">
+      <div style="height:14px"></div>
+      <label for="lessonNumberInput">رقم الحصة</label>
+      <input type="number" id="lessonNumberInput" placeholder="رقم الحصة" min="1" inputmode="numeric">
     </div>
     <button class="btn btn-primary btn-block" id="toStep2Btn" disabled>متابعة</button>
   </div>
@@ -290,8 +293,29 @@
    حطّه هنا مرة واحدة، مش هيظهر في الواجهة خالص
    ============================================================ */
 const CONFIG = {
-  API_URL: "https://script.google.com/macros/s/AKfycbyUHHk46LVfk5b8a1LnxeuuH5BbOEVEdVVTmiatbXIeY8e5AE78uj0PO5RDjxbz8rqefw/exec"
+  API_URL: "https://script.google.com/macros/s/AKfycbwaQ-b9P8ZXjtXfsVmwAMJxyXgW47VC09DkxGL3cKnPodYt9AgTRBBh0cyLKH9ZxjkFCg/exec"
 };
+
+/* ============================================================
+   رقم الحصة — الحساب التلقائي
+   START_DATE لازم يكون تاريخ أول يوم سبت في الترم (بصيغة YYYY-MM-DD)
+   كل ما يعدي أسبوع (كل سبت جديد) رقم الحصة بيزيد ١ تلقائي
+   ============================================================ */
+const START_DATE = "2026-08-22"; // عدّل هنا لو تاريخ بداية الترم اتغيّر
+
+function calculateLessonNumber(){
+  const start = new Date(START_DATE + "T00:00:00");
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dayOfWeek = today.getDay(); // الأحد=0 ... السبت=6
+  const daysSinceSaturday = (dayOfWeek - 6 + 7) % 7; // كام يوم فات من آخر سبت
+  const currentWeekStart = new Date(today);
+  currentWeekStart.setDate(today.getDate() - daysSinceSaturday);
+  const diffDays = Math.round((currentWeekStart - start) / (1000 * 60 * 60 * 24));
+  const weeksPassed = Math.floor(diffDays / 7);
+  const lessonNumber = weeksPassed + 1;
+  return lessonNumber < 1 ? 1 : lessonNumber; // ميبقاش أقل من ١ لو حد فتح التطبيق قبل بداية الترم
+}
 
 /* ============================================================ state */
 const state = {
@@ -599,6 +623,7 @@ async function confirmAttendance(){
     supervisor: state.supervisor,
     date: formatDate(now),
     time: formatTime(now),
+    lessonNumber: $('lessonNumberInput').value || '',
   };
   state.session.unshift(record);
   renderSessionList();
@@ -679,7 +704,7 @@ $('changeCenterBtn').addEventListener('click', ()=>{
 $('exportBtn').addEventListener('click', ()=>{
   if(state.session.length === 0){ showToast('مفيش تسجيلات لتصديرها دلوقتي'); return; }
   const rows = state.session.map(r=>({
-    'الاسم': r.name, 'الكود': r.code, 'رقم الهاتف': r.phone,
+    'رقم الحصة': r.lessonNumber || '', 'الاسم': r.name, 'الكود': r.code, 'رقم الهاتف': r.phone,
     'طالب جديد': r.isNew ? 'نعم' : 'لا', 'الواجب': r.homework,
     'السنتر': r.center, 'المشرف': r.supervisor, 'التاريخ': r.date, 'الوقت': r.time,
   }));
@@ -744,6 +769,9 @@ window.addEventListener('offline', ()=>{ $('netDot').classList.add('off'); $('ne
 
 /* حالة الاتصال عند التحميل + استئناف أي تسجيلات معلّقة من جلسة سابقة */
 (async function init(){
+  // تعبئة رقم الحصة تلقائياً بناءً على تاريخ اليوم (تفضل قابلة للتعديل اليدوي)
+  $('lessonNumberInput').value = calculateLessonNumber();
+
   if(!navigator.onLine){ $('netDot').classList.add('off'); $('netText').textContent='غير متصل'; }
   const pending = await getPending();
   updatePendingBadge(pending.length);
