@@ -237,7 +237,7 @@
     <div class="tabpane" id="tab-search">
       <div class="card">
         <label for="searchInput">ابحث بالكود أو رقم الهاتف أو الاسم</label>
-        <input type="search" id="searchInput" placeholder="اكتب الكود أو رقم الهاتف...">
+        <input type="search" id="searchInput" placeholder="اكتب الكود أو رقم الهاتف..." inputmode="tel">
         <div style="height:10px"></div>
         <div class="result-list" id="searchResults"></div>
       </div>
@@ -293,7 +293,10 @@
    حطّه هنا مرة واحدة، مش هيظهر في الواجهة خالص
    ============================================================ */
 const CONFIG = {
-  API_URL: "https://script.google.com/macros/s/AKfycbwaQ-b9P8ZXjtXfsVmwAMJxyXgW47VC09DkxGL3cKnPodYt9AgTRBBh0cyLKH9ZxjkFCg/exec"
+  API_URL: "https://script.google.com/macros/s/AKfycbwaQ-b9P8ZXjtXfsVmwAMJxyXgW47VC09DkxGL3cKnPodYt9AgTRBBh0cyLKH9ZxjkFCg/exec",
+  // كود الدولة اللي بيتحط بدل الصفر في أول رقم هاتف الطالب الجديد، عشان
+  // جوجل شيت ميقصش الصفر الأول لما يعتبر الرقم "رقم" مش نص (مثال: ٠١٠... تبقى ٢٠١٠...)
+  PHONE_COUNTRY_PREFIX: "20"
 };
 
 /* ============================================================
@@ -302,6 +305,17 @@ const CONFIG = {
    كل ما يعدي أسبوع (كل سبت جديد) رقم الحصة بيزيد ١ تلقائي
    ============================================================ */
 const START_DATE = "2026-08-22"; // عدّل هنا لو تاريخ بداية الترم اتغيّر
+
+// رقم أول حصة في الترم — عادةً ١، لكن لو عايز الترقيم يبدأ من رقم تاني غيّره هنا
+const START_LESSON_NUMBER = 1;
+
+// أي أسبوع (سبت) هتعمله "تخطي" (إجازة/عطلة رسمية ومفيش حصص فيه) حط تاريخه هنا
+// بصيغة "YYYY-MM-DD"، وترقيم الحصص هيفضل متسلسل عادي من غير ما يتقطع بسببه.
+// مثال: لو الأسبوع اللي أول سبت فيه 2026-09-19 هيبقى إجازة، حط:
+// const SKIPPED_WEEKS = ["2026-09-19"];
+const SKIPPED_WEEKS = [
+  // "2026-09-19",
+];
 
 function calculateLessonNumber(){
   const start = new Date(START_DATE + "T00:00:00");
@@ -313,8 +327,16 @@ function calculateLessonNumber(){
   currentWeekStart.setDate(today.getDate() - daysSinceSaturday);
   const diffDays = Math.round((currentWeekStart - start) / (1000 * 60 * 60 * 24));
   const weeksPassed = Math.floor(diffDays / 7);
-  const lessonNumber = weeksPassed + 1;
-  return lessonNumber < 1 ? 1 : lessonNumber; // ميبقاش أقل من ١ لو حد فتح التطبيق قبل بداية الترم
+
+  // عدد الأسابيع المتخطاة (من SKIPPED_WEEKS) اللي وقعت من بداية الترم لحد
+  // الأسبوع الحالي — بنشيلهم من الحساب عشان الترقيم يفضل متسلسل من غير قطع
+  const skippedCount = SKIPPED_WEEKS.filter(dateStr => {
+    const d = new Date(dateStr + "T00:00:00");
+    return d >= start && d <= currentWeekStart;
+  }).length;
+
+  const lessonNumber = weeksPassed - skippedCount + START_LESSON_NUMBER;
+  return lessonNumber < START_LESSON_NUMBER ? START_LESSON_NUMBER : lessonNumber;
 }
 
 /* ============================================================ state */
@@ -448,6 +470,15 @@ async function fetchDatabase(){
 function normalizePhone(p){
   return String(p).replace(/[^0-9]/g,'').replace(/^20/,'').replace(/^0/,'');
 }
+// بيتستخدم بس لرقم "طالب جديد": بيشيل الصفر الأول (لو موجود) ويحط كود
+// الدولة (PHONE_COUNTRY_PREFIX) بداله، عشان الرقم متتقصش أول خانة منه على الشيت.
+// مثال: 01012345678 → 21012345678  |  011xxxxxxxx → 211xxxxxxxx
+function formatPhoneWithCountryCode(raw){
+  let digits = String(raw || '').replace(/[^0-9]/g, '');
+  if(digits.startsWith('0')) digits = digits.slice(1);
+  if(!digits.startsWith(CONFIG.PHONE_COUNTRY_PREFIX)) digits = CONFIG.PHONE_COUNTRY_PREFIX + digits;
+  return digits;
+}
 
 /* ============================================================ التبويبات (QR / بحث / طالب جديد) */
 document.querySelectorAll('.tabbtn').forEach(btn=>{
@@ -558,9 +589,18 @@ $('searchInput').addEventListener('input', (e)=>{
 /* ============================================================ طالب جديد */
 $('registerNewBtn').addEventListener('click', ()=>{
   const name = $('newNameInput').value.trim();
-  const phone = $('newPhoneInput').value.trim();
-  if(!name || !phone){
+  const phoneRaw = $('newPhoneInput').value.trim();
+  if(!name || !phoneRaw){
     showToast('من فضلك أدخل الاسم ورقم الهاتف');
+    return;
+  }
+  const phone = formatPhoneWithCountryCode(phoneRaw);
+  // منع تكرار الطالب الجديد في نفس الجلسة عن طريق رقم الهاتف (مش الاسم)،
+  // عشان كل مشرف ممكن يكتب اسم نفس الطالب بشكل مختلف
+  const nRaw = normalizePhone(phoneRaw);
+  const duplicateInSession = state.session.some(r => !r.code && normalizePhone(r.phone) === nRaw);
+  if(duplicateInSession){
+    showToast('الرقم ده مسجل بالفعل كطالب جديد في الجلسة دي');
     return;
   }
   openConfirm({ name, phone, code:'' }, true);
