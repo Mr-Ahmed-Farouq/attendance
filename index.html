@@ -654,6 +654,7 @@ async function confirmAttendance(){
   if(!state.selected || !state.homeworkChoice) return;
   const now = new Date();
   const record = {
+    _syncId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     name: state.selected.name,
     code: state.selected.code || '',
     phone: state.selected.phone || '',
@@ -786,6 +787,12 @@ async function attemptSync(){
   const pending = await getPending();
   if(pending.length === 0) return;
   syncing = true;
+  // بناخد "نسخة" من القائمة زي ما هي دلوقتي، وبنفتكر الـ id بتوعها. ده مهم عشان
+  // لو حد سجّل شخص جديد وضاف للقائمة إحنا لسه مستنيين رد السيرفر، منمسحوش
+  // السجل الجديد ده بالغلط لما رد السيرفر بتاع الدفعة القديمة يوصل (كان ده سبب
+  // إن لما بترصد بسرعة ورا بعض، السجلات اللي بعد الأول بتضيع من قائمة الانتظار
+  // من غير ما تتبعت للسيرفر خالص)
+  const sentIds = new Set(pending.map(r => r._syncId));
   try{
     const res = await fetch(CONFIG.API_URL, {
       method: 'POST',
@@ -794,9 +801,16 @@ async function attemptSync(){
     });
     const data = await res.json();
     if(data && data.success){
-      await setPending([]);
-      updatePendingBadge(0);
+      // بنمسح بس السجلات اللي فعلاً اتبعتت (بالمقارنة بالـ id)، مش القائمة
+      // كلها — أي سجل جديد اتضاف أثناء استنى الرد بيفضل موجود عشان يتزامن بعد كده
+      const stillPending = await getPending();
+      const remaining = stillPending.filter(r => !sentIds.has(r._syncId));
+      await setPending(remaining);
+      updatePendingBadge(remaining.length);
       showToast(`تمت مزامنة ${pending.length} تسجيل بنجاح ✓`);
+      syncing = false;
+      if(remaining.length > 0){ attemptSync(); } // فيه سجلات جديدة اتضافت في الأثناء، زامنها فوراً من غير استنى
+      return;
     }
   }catch(err){
     // هيفضل في قائمة الانتظار وهيحاول تاني تلقائي
