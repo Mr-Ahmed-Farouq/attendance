@@ -670,8 +670,21 @@ async function confirmAttendance(){
   renderSessionList();
   saveCurrentSession();
   closeConfirm();
+  clearSearchAfterRegister();
   showToast(`تم تسجيل حضور ${record.name}`);
   await queueForSync(record);
+}
+
+// بعد ما يتسجل أي طالب (سواء بالـ QR أو بالبحث)، بنمسح خانة البحث ونتائجها
+// تلقائي، ولو تبويب البحث هو النشط بنرجّع الفوكس على الخانة على طول عشان
+// المشرف يقدر يكتب كود/رقم الطالب اللي بعده من غير ما يمسح بنفسه أو يدوس على الخانة تاني
+function clearSearchAfterRegister(){
+  $('searchInput').value = '';
+  $('searchResults').innerHTML = '';
+  const searchPane = $('tab-search');
+  if(searchPane.classList.contains('active')){
+    $('searchInput').focus();
+  }
 }
 
 function renderSessionList(){
