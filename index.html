@@ -519,13 +519,41 @@ async function startScanner(){
 }
 function pauseScanner(){ scanning = false; }
 function resumeScanner(){
-  if(!scanning && videoStream){ scanning = true; requestAnimationFrame(tickScan); }
   scanLocked = false;
+  const video = $('scanVideo');
+  if(!videoStream){
+    // مفيش استريم أصلاً (أول مرة أو اتوقف قبل كده) — نبدأ الكاميرا من جديد
+    startScanner();
+    return;
+  }
+  const tracksAlive = videoStream.getTracks().some(t => t.readyState === 'live');
+  if(!tracksAlive){
+    // نظام الموبايل قفل الكاميرا فعلياً (زي قفل الشاشة أو الرجوع من تطبيق تاني)
+    // فمجرد استئناف اللوب مش هيكفي — لازم نطلب الكاميرا من الأول
+    videoStream = null;
+    startScanner();
+    return;
+  }
+  // المتصفحات على الموبايل بتوقف تشغيل الـ<video> تلقائي لما يبقى مخفي
+  // (لما نبدّل لتاب البحث أو طالب جديد)، فلازم نطلب play() تاني هنا صراحةً
+  // وإلا هيفضل واقف على آخر فريم شافه (الكاميرا تبان "معلقة")
+  const playPromise = video.play();
+  if(playPromise && playPromise.catch){ playPromise.catch(()=>{}); }
+  if(!scanning){ scanning = true; requestAnimationFrame(tickScan); }
 }
 function stopScanner(){
   scanning = false;
   if(videoStream){ videoStream.getTracks().forEach(t=>t.stop()); videoStream = null; }
 }
+// لو الصفحة راحت الخلفية (قفل شاشة الموبايل، أو تبديل لتطبيق تاني) ورجعت،
+// وتبويب مسح QR هو النشط، نتأكد إن الكاميرا اشتغلت تاني (مش هتفضل معلقة)
+document.addEventListener('visibilitychange', ()=>{
+  if(document.hidden){
+    pauseScanner();
+  }else if($('tab-qr').classList.contains('active')){
+    resumeScanner();
+  }
+});
 function tickScan(){
   if(!scanning) return;
   const video = $('scanVideo');
