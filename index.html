@@ -369,11 +369,21 @@ function showStep(n){
 }
 
 /* ============================================================ الخطوة ١: اسم المشرف */
+const SUPERVISOR_STORAGE_KEY = 'last-supervisor-name';
+function saveSupervisorName(name){
+  try{ localStorage.setItem(SUPERVISOR_STORAGE_KEY, name); }
+  catch(e){ console.error('save supervisor name failed', e); }
+}
+function loadSupervisorName(){
+  try{ return localStorage.getItem(SUPERVISOR_STORAGE_KEY) || ''; }
+  catch(e){ return ''; }
+}
 $('supervisorInput').addEventListener('input', (e)=>{
   $('toStep2Btn').disabled = e.target.value.trim().length === 0;
 });
 $('toStep2Btn').addEventListener('click', ()=>{
   state.supervisor = $('supervisorInput').value.trim();
+  saveSupervisorName(state.supervisor); // نحفظ الاسم عشان يتعبى تلقائي المرة الجاية
   showStep(2);
   loadCenters();
 });
@@ -864,6 +874,14 @@ window.addEventListener('offline', ()=>{ $('netDot').classList.add('off'); $('ne
 
 /* حالة الاتصال عند التحميل + استئناف أي تسجيلات معلّقة من جلسة سابقة */
 (async function init(){
+  // تعبئة اسم المشرف تلقائياً بآخر اسم كان متسجل (تفضل قابلة للتعديل اليدوي)
+  const savedSupervisor = loadSupervisorName();
+  if(savedSupervisor){
+    $('supervisorInput').value = savedSupervisor;
+    state.supervisor = savedSupervisor;
+    $('toStep2Btn').disabled = false;
+  }
+
   // تعبئة رقم الحصة تلقائياً بناءً على تاريخ اليوم (تفضل قابلة للتعديل اليدوي)
   $('lessonNumberInput').value = calculateLessonNumber();
 
