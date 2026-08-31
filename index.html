@@ -158,6 +158,21 @@
 </style>
 </head>
 <body>
+
+<!-- شاشة الدخول: بتظهر مرة واحدة بس لكل جهاز، وبتختفي بعدها للأبد لحد ما
+     السيرفر يرفض كلمة السر (يعني اتغيّرت) -->
+<div class="overlay show" id="accessGate">
+  <div class="sheet">
+    <div class="eyebrow">قبل ما تبدأ</div>
+    <div class="title">كلمة السر</div>
+    <div class="subtitle">اطلبها من المسؤول عن التطبيق. بتتكتب مرة واحدة بس على الجهاز ده.</div>
+    <div id="accessGateError" class="scan-error" style="display:none; margin-bottom:10px;"></div>
+    <input type="text" id="accessGateInput" placeholder="اكتب كلمة السر هنا" autocomplete="off">
+    <div style="height:14px"></div>
+    <button class="btn btn-primary btn-block" id="accessGateBtn">دخول</button>
+  </div>
+</div>
+
 <div id="app">
 
   <!-- الخطوة 1: اسم المشرف -->
@@ -294,10 +309,51 @@
    ============================================================ */
 const CONFIG = {
   API_URL: "https://script.google.com/macros/s/AKfycby8iT3IVZ-XjJgXgwar8TdqIv7gBjwXSZPzDZnzDpxEzkIZVNo3WI18mjYyNNlfWXmW-w/exec",
+  // ملحوظة مهمة: عمدًا مفيش أي كلمة سر أو توكن مكتوب هنا في الكود. كلمة
+  // السر بتتكتب يدويًا مرة واحدة في كل جهاز مشرف (أول ما يفتح التطبيق)
+  // وبتتخزن على جهازه بس (localStorage) — مش موجودة في أي ملف بيتنشر على
+  // GitHub. السيرفر (Apps Script) هو اللي بيتحقق منها. شوف الشاشة اللي
+  // بتظهر أول ما التطبيق يفتح، ودالة getAccessKey() تحت.
   // كود الدولة اللي بيتحط بدل الصفر في أول رقم هاتف الطالب الجديد، عشان
   // جوجل شيت ميقصش الصفر الأول لما يعتبر الرقم "رقم" مش نص (مثال: ٠١٠... تبقى ٢٠١٠...)
   PHONE_COUNTRY_PREFIX: "20"
 };
+
+/* ============================================================
+   كلمة سر الدخول — مش مكتوبة في الكود، بتتكتب يدوي مرة واحدة وتتخزن
+   محليًا على جهاز المشرف بس. أي طلب للسيرفر بيتبعت معاه القيمة دي، والسيرفر
+   بيرفض أي طلب من غير القيمة الصح (المحفوظة عنده في Script Properties).
+   ============================================================ */
+const ACCESS_KEY_STORAGE = 'app-access-key';
+function getAccessKey(){
+  try{ return localStorage.getItem(ACCESS_KEY_STORAGE) || ''; }
+  catch(e){ return ''; }
+}
+function setAccessKey(v){
+  try{ localStorage.setItem(ACCESS_KEY_STORAGE, v); }
+  catch(e){ console.error('save access key failed', e); }
+}
+function clearAccessKey(){
+  try{ localStorage.removeItem(ACCESS_KEY_STORAGE); }
+  catch(e){}
+}
+function showAccessGate(message){
+  const gate = document.getElementById('accessGate');
+  const err = document.getElementById('accessGateError');
+  if(message){ err.textContent = message; err.style.display = 'block'; }
+  else { err.style.display = 'none'; }
+  gate.classList.add('show');
+  document.getElementById('accessGateInput').focus();
+}
+function hideAccessGate(){
+  document.getElementById('accessGate').classList.remove('show');
+}
+// بتتنادى لما أي طلب يرجع "unauthorized" — يعني كلمة السر المحفوظة غلط
+// أو اتغيّرت من السيرفر. بنمسحها ونطلب من المشرف يدخلها تاني.
+function handleUnauthorized(){
+  clearAccessKey();
+  showAccessGate('كلمة السر غلط أو اتغيّرت — من فضلك ادخلها تاني');
+}
 
 /* ============================================================
    رقم الحصة — الحساب التلقائي
@@ -466,15 +522,19 @@ $('toStep4Btn').addEventListener('click', ()=>{
 
 /* ============================================================ نداءات الشبكة */
 async function fetchCenters(){
-  const res = await fetch(`${CONFIG.API_URL}?action=centers&t=${Date.now()}`);
+  const res = await fetch(`${CONFIG.API_URL}?action=centers&token=${encodeURIComponent(getAccessKey())}&t=${Date.now()}`);
   if(!res.ok) throw new Error('network');
   const data = await res.json();
+  if(data && data.error === 'unauthorized'){ handleUnauthorized(); throw new Error('unauthorized'); }
+  if(data && data.error) throw new Error(data.error);
   return data.centers || [];
 }
 async function fetchDatabase(){
-  const res = await fetch(`${CONFIG.API_URL}?action=database&t=${Date.now()}`);
+  const res = await fetch(`${CONFIG.API_URL}?action=database&token=${encodeURIComponent(getAccessKey())}&t=${Date.now()}`);
   if(!res.ok) throw new Error('network');
   const data = await res.json();
+  if(data && data.error === 'unauthorized'){ handleUnauthorized(); throw new Error('unauthorized'); }
+  if(data && data.error) throw new Error(data.error);
   return data.students || [];
 }
 function normalizePhone(p){
@@ -848,9 +908,14 @@ async function attemptSync(){
     const res = await fetch(CONFIG.API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // نتجنب preflight مع Apps Script
-      body: JSON.stringify({ action:'attendance', records: pending }),
+      body: JSON.stringify({ action:'attendance', records: pending, token: getAccessKey() }),
     });
     const data = await res.json();
+    if(data && data.error === 'unauthorized'){
+      handleUnauthorized();
+      syncing = false;
+      return; // بنسيب السجلات في قائمة الانتظار، هتتبعت أول ما يدخل كلمة السر الصح
+    }
     if(data && data.success){
       // بنمسح بس السجلات اللي فعلاً اتبعتت (بالمقارنة بالـ id)، مش القائمة
       // كلها — أي سجل جديد اتضاف أثناء استنى الرد بيفضل موجود عشان يتزامن بعد كده
@@ -872,8 +937,19 @@ setInterval(attemptSync, 20000);
 window.addEventListener('online', ()=>{ $('netDot').classList.remove('off'); $('netText').textContent='متصل'; attemptSync(); });
 window.addEventListener('offline', ()=>{ $('netDot').classList.add('off'); $('netText').textContent='غير متصل'; });
 
+/* ============================================================ شاشة الدخول (كلمة السر) */
+function submitAccessGate(){
+  const val = $('accessGateInput').value.trim();
+  if(!val){ showAccessGate('اكتب كلمة السر الأول'); return; }
+  setAccessKey(val);
+  hideAccessGate();
+  initApp();
+}
+$('accessGateBtn').addEventListener('click', submitAccessGate);
+$('accessGateInput').addEventListener('keydown', (e)=>{ if(e.key === 'Enter') submitAccessGate(); });
+
 /* حالة الاتصال عند التحميل + استئناف أي تسجيلات معلّقة من جلسة سابقة */
-(async function init(){
+async function initApp(){
   // تعبئة اسم المشرف تلقائياً بآخر اسم كان متسجل (تفضل قابلة للتعديل اليدوي)
   const savedSupervisor = loadSupervisorName();
   if(savedSupervisor){
@@ -896,7 +972,17 @@ window.addEventListener('offline', ()=>{ $('netDot').classList.add('off'); $('ne
     state.session = savedSession;
     renderSessionList();
   }
-})();
+}
+
+// لو كلمة السر متخزنة بالفعل من زيارة سابقة، نشغّل التطبيق على طول من
+// غير ما نوري شاشة الدخول تاني. لو مش متخزنة، نوري الشاشة ونستنى إدخالها
+// (initApp() هتتنادى من submitAccessGate() فور ما يدخلها المشرف).
+if(getAccessKey()){
+  hideAccessGate();
+  initApp();
+} else {
+  showAccessGate();
+}
 </script>
 </body>
 </html>
